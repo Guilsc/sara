@@ -1,6 +1,6 @@
 // Phase 2 exit gate: receipts (1), secret scrubbing (4), workspace snapshots + undo (5).
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -202,6 +202,22 @@ test('snapshots: store dedupes unchanged files, skips node_modules, rejects bad 
   assert.throws(() => s.restore('w', ws, '../../etc'), /Invalid snapshot id/);
   s.restore('w', ws, one.id);
   assert.ok(existsSync(join(ws, 'node_modules', 'x', 'big.js')), 'skipped folders are left alone');
+});
+
+test('snapshots: detects same-size changes when modification time is unchanged', (t) => {
+  const { dir, cleanup } = tempDir();
+  t.after(cleanup);
+  const s = new SnapshotStore(dir);
+  const ws = workspaceDir(dir, 'w');
+  const file = join(ws, 'edit.txt');
+  writeFileSync(file, 'a');
+  const when = new Date('2026-01-01T00:00:00Z');
+  utimesSync(file, when, when);
+  const before = s.take('w', ws, 'before').id;
+  writeFileSync(file, 'b');
+  utimesSync(file, when, when);
+  const after = s.take('w', ws, 'after').id;
+  assert.deepEqual(s.compare('w', before, after).changed, ['edit.txt']);
 });
 
 test('snapshots API: undo via HTTP adds a note Sara sees; refused while she works there', async (t) => {

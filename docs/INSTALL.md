@@ -626,6 +626,12 @@ Tailscale address if she set one. A last backup goes to your Desktop first. Her 
 up again and she remembers everything) unless you tick *Also delete her data*. Then drag Sara to the
 Trash.
 
+## Logs
+
+Sara saves a copy of its console output at `<data>/logs/sara.log` (for a systemd installation, `<data>` is `/var/lib/sara`). Each line is a JSON object with a timestamp, level and message. When the log exceeds 5 MB, Sara rotates it and keeps up to five older files (`sara.log.1` through `sara.log.5`).
+
+On a systemd installation, you can also check the service journal with `sudo journalctl -u sara`. For recent startup problems, `sudo sara logs` is the simplest place to start. Logs may contain information about your setup, so check them before sharing.
+
 ## Troubleshooting
 
 - **"Sara is NOT answering"**: `sudo sara logs` shows why; most often a port clash or a bad edit in

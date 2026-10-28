@@ -17,8 +17,14 @@ interface FileEntry {
   hash: string;
   size: number;
   mtimeMs: number;
+  /** Change time (set by the system on any write or timestamp change; can't be set back). */
+  ctimeMs?: number;
   mode: number;
 }
+
+/** A file changed this close to the previous snapshot may have been edited again within the
+ * filesystem's timestamp resolution, so its content is checked rather than trusted. */
+const RACY_MS = 2000;
 
 export interface SnapshotMeta {
   id: string;
@@ -61,12 +67,19 @@ export class SnapshotStore {
     return JSON.parse(readFileSync(join(this.#dirs(workspace).manifests, file), 'utf8')) as Manifest;
   }
 
-  /** Snapshots the workspace directory. Reuses content-addressed objects for unchanged content. */
+  /**
+   * Snapshots the workspace directory. A file reuses the previous hash only when its size, modified
+   * time and change time are all unchanged and it was last changed well before the previous snapshot
+   * (the same rule git uses for "racily clean" files); anything else is read and hashed.
+   */
   take(workspace: string, workspaceDir: string, label: string, conversationId?: string): SnapshotMeta {
     const { objects, manifests } = this.#dirs(workspace);
     mkdirSync(objects, { recursive: true, mode: 0o700 });
     mkdirSync(manifests, { recursive: true, mode: 0o700 });
     const files = this.#manifestFiles(workspace);
+    const prev = files.length ? this.#load(workspace, files.at(-1)!).entries : {};
+    // When the previous snapshot was taken (its id starts with Date.now() in ms).
+    const prevAt = files.length ? Number(files.at(-1)!.split('-')[0]) : 0;
     const entries: Record<string, FileEntry> = {};
     const skipped: string[] = [];
     let count = 0;
@@ -88,6 +101,12 @@ export class SnapshotStore {
           skipped.push(rel);
           continue;
         }
+        const old = prev[rel];
+        const settled = st.mtimeMs < prevAt - RACY_MS && st.ctimeMs < prevAt - RACY_MS;
+        if (old && old.size === st.size && old.mtimeMs === st.mtimeMs && old.ctimeMs === st.ctimeMs && settled) {
+          entries[rel] = { ...old, mode: st.mode & 0o777 };
+          continue;
+        }
         const data = readFileSync(abs);
         const hash = createHash('sha256').update(data).digest('hex');
         const obj = join(objects, hash);
@@ -96,7 +115,7 @@ export class SnapshotStore {
           if (newBytes > MAX_NEW_BYTES) throw new Error('Too much changed data for one snapshot (over 1 GB).');
           writeFileSync(obj, data, { mode: 0o600 });
         }
-        entries[rel] = { hash, size: st.size, mtimeMs: st.mtimeMs, mode: st.mode & 0o777 };
+        entries[rel] = { hash, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, mode: st.mode & 0o777 };
       }
     };
     walk(workspaceDir);

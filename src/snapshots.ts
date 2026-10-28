@@ -61,13 +61,12 @@ export class SnapshotStore {
     return JSON.parse(readFileSync(join(this.#dirs(workspace).manifests, file), 'utf8')) as Manifest;
   }
 
-  /** Snapshots the workspace directory. Unchanged files (same size + mtime) reuse the previous hash. */
+  /** Snapshots the workspace directory. Reuses content-addressed objects for unchanged content. */
   take(workspace: string, workspaceDir: string, label: string, conversationId?: string): SnapshotMeta {
     const { objects, manifests } = this.#dirs(workspace);
     mkdirSync(objects, { recursive: true, mode: 0o700 });
     mkdirSync(manifests, { recursive: true, mode: 0o700 });
     const files = this.#manifestFiles(workspace);
-    const prev = files.length ? this.#load(workspace, files.at(-1)!).entries : {};
     const entries: Record<string, FileEntry> = {};
     const skipped: string[] = [];
     let count = 0;
@@ -87,11 +86,6 @@ export class SnapshotStore {
         const st = statSync(abs);
         if (st.size > MAX_FILE_BYTES) {
           skipped.push(rel);
-          continue;
-        }
-        const old = prev[rel];
-        if (old && old.size === st.size && old.mtimeMs === st.mtimeMs) {
-          entries[rel] = { ...old, mode: st.mode & 0o777 };
           continue;
         }
         const data = readFileSync(abs);
